@@ -34,12 +34,11 @@
 #include "stm32f4xx_hal.h"
 #include "stm32f4xx.h"
 #include "stm32f4xx_it.h"
+#include "stm32f4xx_hal_tim.h"
 
 /* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
-
-/* External variables --------------------------------------------------------*/
 
 /******************************************************************************/
 /*            Cortex-M4 Processor Interruption and Exception Handlers         */ 

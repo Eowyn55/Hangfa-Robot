@@ -1,12 +1,6 @@
 #include "robotControl.h"
 
 
-void fillAbortBuffer(uint8_t *buffer){
-		int j = 0;
-		for(;j<8;j++)
-			buffer[j] = 0x00;
-}
-
 void fillForwardBuffer2(uint8_t *buffer){
 	buffer[0] = 0xE8;
 	buffer[1] = 0x08;
@@ -62,6 +56,7 @@ void slowSpeedForward(uint8_t *buffer){
 	buffer[7] = 0x00;
 }
 
+
 void slowSpeedBackward(uint8_t *buffer){
 	buffer[0] = 0xFF;
 	buffer[1] = 0x04;
@@ -74,40 +69,10 @@ void slowSpeedBackward(uint8_t *buffer){
 }
 
 void mediumSpeedForward(uint8_t *buffer){
-//	buffer[0] = 0xE8;
-//	buffer[1] = 0x08;
-//	buffer[2] = 0x0F;
-//	buffer[3] = 0x0A;
-//	buffer[4] = 0x00;
-//	buffer[5] = 0x00;
-//	buffer[6] = 0x00;
-//	buffer[7] = 0x00;
 	buffer[0] = 0xE8;
 	buffer[1] = 0x08;
-	buffer[2] = 0xE8;
-	buffer[3] = 0x08;
-	buffer[4] = 0x00;
-	buffer[5] = 0x00;
-	buffer[6] = 0x00;
-	buffer[7] = 0x00;
-}
-
-void mediumSpeedX(uint8_t *buffer){
-	buffer[0] = 0xE8;
-	buffer[1] = 0x08;
-	buffer[2] = 0x00;
-	buffer[3] = 0x00;
-	buffer[4] = 0xFF;
-	buffer[5] = 0x05;
-	buffer[6] = 0x00;
-	buffer[7] = 0x00;
-}
-
-void mediumSpeedY(uint8_t *buffer){
-	buffer[0] = 0x00;
-	buffer[1] = 0x00;
-	buffer[2] = 0xE8;
-	buffer[3] = 0x08;
+	buffer[2] = 0x0F;
+	buffer[3] = 0x0A;
 	buffer[4] = 0x00;
 	buffer[5] = 0x00;
 	buffer[6] = 0x00;
@@ -148,16 +113,30 @@ void fastSpeedBackward(uint8_t *buffer){
 }
 
 
-HAL_StatusTypeDef abortMove(CAN_HandleTypeDef *hcan, uint8_t *buffer){
+HAL_StatusTypeDef abortMove(CAN_HandleTypeDef *hcan){
+			HAL_StatusTypeDef tempCheck = HAL_OK;
+			hcan->pTxMsg->Data[0] = 0x00;
+			hcan->pTxMsg->Data[1] = 0x00;
+			hcan->pTxMsg->Data[2] = 0x00;
+			hcan->pTxMsg->Data[3] = 0x00;
+			hcan->pTxMsg->Data[4] = 0x00;
+			hcan->pTxMsg->Data[5] = 0x00;
+			hcan->pTxMsg->Data[6] = 0x00;
+			hcan->pTxMsg->Data[7] = 0x00;
+			tempCheck = HAL_CAN_Transmit(hcan, 400);
+			return tempCheck;
+}
+
+HAL_StatusTypeDef moveRobot(CAN_HandleTypeDef *hcan, uint8_t *buffer){
 			HAL_StatusTypeDef tempCheck = HAL_OK;
 			hcan->pTxMsg->Data[0] = buffer[0];
 			hcan->pTxMsg->Data[1] = buffer[1];
 			hcan->pTxMsg->Data[2] = buffer[2];
 			hcan->pTxMsg->Data[3] = buffer[3];
-			hcan->pTxMsg->Data[4] = buffer[4];
-			hcan->pTxMsg->Data[5] = buffer[5];
-			hcan->pTxMsg->Data[6] = buffer[6];
-			hcan->pTxMsg->Data[7] = buffer[7];
+			hcan->pTxMsg->Data[4] = 0x00;
+			hcan->pTxMsg->Data[5] = 0x00;
+			hcan->pTxMsg->Data[6] = 0x00;
+			hcan->pTxMsg->Data[7] = 0x00;
 			tempCheck = HAL_CAN_Transmit(hcan, 400);
 			return tempCheck;
 }
@@ -179,7 +158,7 @@ void rotateleft(CAN_HandleTypeDef *hcan, double angle,	uint8_t *abortBuffer){
 		Error_Handler();
 	}
 	HAL_Delay(duration);
-	abortMove(hcan, abortBuffer);
+	abortMove(hcan);
 
 }
 
@@ -198,15 +177,15 @@ void rotateCCW(CAN_HandleTypeDef *hcan, int angle, float speed, uint8_t *buffer,
 		hcan->pTxMsg->Data[1] = buffer[1];
 		hcan->pTxMsg->Data[2] = buffer[0];
 		hcan->pTxMsg->Data[3] = buffer[1];
-		hcan->pTxMsg->Data[4] = 0x00;// proveriti da li autorotational ima nekog smisla slati
-		hcan->pTxMsg->Data[5] = 0x00;// 
+		hcan->pTxMsg->Data[4] = 0x00;
+		hcan->pTxMsg->Data[5] = 0x00;
 		hcan->pTxMsg->Data[6] = 0x00;
 		hcan->pTxMsg->Data[7] = 0x00;
 		HAL_StatusTypeDef check = HAL_CAN_Transmit(hcan, 400);
 		
 		HAL_Delay(duration);
 		
-		abortMove(hcan, abortBuffer);
+		abortMove(hcan);
 }
 
 void rotateCW(CAN_HandleTypeDef *hcan, int angle, float speed, uint8_t *buffer, uint8_t *abortBuffer){
@@ -227,15 +206,15 @@ void rotateCW(CAN_HandleTypeDef *hcan, int angle, float speed, uint8_t *buffer, 
 		hcan->pTxMsg->Data[1] = -buffer[1];
 		hcan->pTxMsg->Data[2] = -buffer[0];
 		hcan->pTxMsg->Data[3] = -buffer[1];
-		hcan->pTxMsg->Data[4] = 0x00;// proveriti da li autorotational ima nekog smisla slati
-		hcan->pTxMsg->Data[5] = 0x00;// 
+		hcan->pTxMsg->Data[4] = 0x00;
+		hcan->pTxMsg->Data[5] = 0x00;
 		hcan->pTxMsg->Data[6] = 0x00;
 		hcan->pTxMsg->Data[7] = 0x00;
 		HAL_StatusTypeDef check = HAL_CAN_Transmit(hcan, 400);
 		
 		HAL_Delay(duration);
 		
-		abortMove(hcan, abortBuffer);
+		abortMove(hcan);
 }
 HAL_StatusTypeDef moveForward(CAN_HandleTypeDef *hcan, int duration, uint8_t *buffer){
 		HAL_StatusTypeDef tempCheck = HAL_OK;
@@ -297,19 +276,10 @@ void moveFigure8(CAN_HandleTypeDef *hcan, uint8_t *forwardbuffer, uint8_t *backw
 }
 
 void goStraight(CAN_HandleTypeDef *hcan, uint8_t *forwardBuffer){
-//		hcan->pTxMsg->Data[0] = forwardBuffer[0];
-//		hcan->pTxMsg->Data[1] = forwardBuffer[1];
-//		hcan->pTxMsg->Data[2] = -forwardBuffer[2];
-//		hcan->pTxMsg->Data[3] = -forwardBuffer[3];
-//		hcan->pTxMsg->Data[4] = forwardBuffer[4];
-//		hcan->pTxMsg->Data[5] = forwardBuffer[5];
-//		hcan->pTxMsg->Data[6] = forwardBuffer[6];
-//		hcan->pTxMsg->Data[7] = forwardBuffer[7];
-	
-	  hcan->pTxMsg->Data[0] = forwardBuffer[0];
+		hcan->pTxMsg->Data[0] = forwardBuffer[0];
 		hcan->pTxMsg->Data[1] = forwardBuffer[1];
-		hcan->pTxMsg->Data[2] = forwardBuffer[2];
-		hcan->pTxMsg->Data[3] = forwardBuffer[3];
+		hcan->pTxMsg->Data[2] = -forwardBuffer[2];
+		hcan->pTxMsg->Data[3] = -forwardBuffer[3];
 		hcan->pTxMsg->Data[4] = forwardBuffer[4];
 		hcan->pTxMsg->Data[5] = forwardBuffer[5];
 		hcan->pTxMsg->Data[6] = forwardBuffer[6];

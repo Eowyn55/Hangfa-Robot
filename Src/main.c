@@ -1,6 +1,13 @@
+/*
+ *  Author       : Milica Stojiljkovic
+ *  Project name : Autonomous vehicle
+ *  Task name    : Main microcontroler 
+ */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_hal.h"
+#include "stm32f4xx_hal_tim.h"
 #include "button.h"
 #include "uart.h"
 #include "robotControl.h"
@@ -10,56 +17,44 @@
 //UART4 Base Address = 0x40004C00
 CAN_HandleTypeDef hcan1;
 UART_HandleTypeDef uartHandle;
+TIM_HandleTypeDef htim10;
 GPIO_InitTypeDef GPIO_InitStructx;
 HAL_StatusTypeDef check = HAL_OK;
-
-//TYPEDEVICE = 0 for Computer Bluetooth
-//TYPEDEVICE = 1 for Android Bluetooth
-#define TYPEDEVICE 0
-//Definitions of the recieved hex numbers sent via bluetooth
-#if TYPEDEVICE == 0
-	#define FIGURE8 0x7F
-	#define FORWARD 0x3F        
-	#define GORIGHT 0x7E
-	#define GOLEFT 0x1F                 
-	#define STOP 0x7D
-	#define BACKWARD 0x3E           
-	#define CIRCLERIGHT 0x7C
-	#define CIRCLELEFT 0x0F
-	#define SLOW 0x7B
-	#define MEDIUM 0x3D
-	#define FAST 0x7A
-#elif TYPEDEVICE == 1 
-	#define FIGURE8 0x7F
-	#define FORWARD 0xBF        
-	#define GORIGHT 0x7E
-	#define GOLEFT 0x5F                 
-	#define STOP 0x7D
-	#define BACKWARD 0xBE           
-	#define CIRCLERIGHT 0x7C
-	#define CIRCLELEFT 0xAF
-	#define SLOW 0x7B
-	#define MEDIUM 0xBD
-	#define FAST 0x7A
-#endif
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
+static void MX_TIM10_Init(void);
+
+// Time in ms to wait for another command
+uint8_t time_ms = 0;
+// cnt that counts every ms
+uint16_t cnt_ms = 0;
+// flag for stoping the movement (watchdog timer timeout)
+uint8_t flag_stop = 0;
+
+// Flag for uart interrupt 
+uint8_t  flag_uart_main = 0;
+uint8_t  flag_uart_timer = 0;
+
+// flag for starting the countdown after the command is received
+uint8_t flag_start_cnt = 0;
+
+// counts 5 bytes for receiving commands
+uint8_t  cnt_uart = 0;
+
 //Init of buffers used for filling the CAN1 Mailbox
 uint8_t abortBuffer[8];
-uint8_t forwardBuffer[8];
-uint8_t backwardBuffer[8];
-uint8_t rotateBuffer[8];
-uint8_t rotateBufferLeft[8];
-uint8_t rotateBufferRight[8];
+uint8_t moveBuffer[4] = {0x00, 0x00, 0x00, 0x00};
+uint8_t moveBuffer_prev[4];
+
 //Init of buffer used to recieve via the bluetooth module
-uint8_t uartReceiveBfr[8];
+uint8_t uartReceiveBfr[5];
 
 //Status variable used to distinguish which operation to be sent to the robot
 int status = 0;
 
-//Macro to set the motherfucking shit nigga
+//Macro to set the robot CAN 
 #define set_extid_CAN(SubCommand, funcCode, addr)  ((uint32_t)((SubCommand<<16) | (funcCode<<8) | addr))
 
 //button interrupt to start robot
@@ -68,48 +63,45 @@ void EXTI9_5_IRQHandler(void){
 	status = 1;
 }
 
-//Interrupt handler for the fucking bluetooth click module
+//Interrupt handler for the bluetooth click module
 void UART4_IRQHandler(void){
-		HAL_UART_IRQHandler(&uartHandle);
-		switch(uartReceiveBfr[0]){
-			case FIGURE8:
-				status = 1;
-				break;
-			case FORWARD:
-				status = 2;
-				break;
-			case GORIGHT:
-				status = 3;
-				break;
-			case GOLEFT:
-				status = 4;
-				break;
-			case STOP:
-				status = 5;
-				abortMove(&hcan1, abortBuffer);
-				break;
-			case BACKWARD:
-				status = 6;
-				break;
-			case CIRCLERIGHT:
-				status = 7;
-				break;
-			case CIRCLELEFT:
-				status = 8;
-				break;
-			case SLOW:
-				status = 9;
-				break;
-			case MEDIUM:
-				status = 10;
-				break;
-			case FAST:
-				status = 11;
-				break;
-			default:
-				status = -1;
+	HAL_UART_IRQHandler(&uartHandle);
+	cnt_uart = cnt_uart + 1;
+	if (cnt_uart == 5)
+	{
+		cnt_uart = 0;
+		flag_uart_main = 1;
+		flag_uart_timer = 1;
+		moveBuffer[0] = uartReceiveBfr[0];
+		moveBuffer[1] = uartReceiveBfr[1];
+		moveBuffer[2] = uartReceiveBfr[2];
+		moveBuffer[3] = uartReceiveBfr[3];
+		time_ms       = uartReceiveBfr[4];
+  }
+  HAL_UART_Receive_IT(&uartHandle, uartReceiveBfr, 5);		
+}
+
+/**
+* @brief This function handles TIM1 update interrupt and TIM10 global interrupt.
+*/
+void TIM1_UP_TIM10_IRQHandler(void)
+{
+	HAL_TIM_IRQHandler(&htim10); 
+	if (flag_uart_timer == 1)
+	{
+		cnt_ms = 1;
+		flag_uart_timer = 0;
+		flag_start_cnt = 1;
+	}
+	else if (flag_start_cnt == 1)
+	{
+		cnt_ms = cnt_ms + 1;
+		if (cnt_ms == time_ms*100 || cnt_ms == 9999)
+		{
+			flag_stop = 1;
+			flag_start_cnt = 0;
 		}
-		HAL_UART_Receive_IT(&uartHandle, uartReceiveBfr, 1);		
+	}
 }
 
 int main(void)
@@ -119,16 +111,16 @@ int main(void)
 	//Init CAN1 Peripheral and GPIO pins for CAN Rx and Tx
   MX_GPIO_Init();
   MX_CAN1_Init();
+	MX_TIM10_Init();
 	//Init GPIO push button used to turn 
 	initButton();
 	//Init of the UART pins and the UART peripheral, as well as enabling Interrupts
 	UARTINIT(&GPIO_InitStructx, &uartHandle);
 	//Filling all of the buffers
-	fillAbortBuffer(abortBuffer);
-	fillForwardBuffer2(forwardBuffer);
-	fillBackwardBuffer(backwardBuffer);
-	fillrotateBufferLeft(rotateBufferLeft);
-	fillrotateBufferRight(rotateBufferRight);
+	int i;
+	for(i = 0; i < 8; i++){
+		abortBuffer[i] = 0x00;
+	}
 	//Creating variable of type transmit messgae from the CAN1 mailbox
 	//Setting the pointer of the transmit mailbox to that address
 	CanTxMsgTypeDef TxMessage;
@@ -136,79 +128,40 @@ int main(void)
 	//Filling the header fields of the CAN1 transmit Mailbox
 	hcan1.pTxMsg->IDE = CAN_ID_EXT;
 	hcan1.pTxMsg->StdId = 0;
-	hcan1.pTxMsg->ExtId = set_extid_CAN(0x00,0x2A,0x01); // 0x00 0x29 0x01 for manual speed control
+	hcan1.pTxMsg->ExtId = set_extid_CAN(0x00,0x29,0x01); // 0x00 0x29 0x01 for manual speed control
 	                                                     // 0x00 0x2A 0x01 for triaxial speed control
 	hcan1.pTxMsg->RTR = CAN_RTR_DATA;
 	hcan1.pTxMsg->DLC = 8;
 	//Enable interrupt for the UART4 recieve
-	HAL_UART_Receive_IT(&uartHandle, uartReceiveBfr, 1);
-	abortMove(&hcan1, abortBuffer);
-	
-	mediumSpeedX(forwardBuffer);
-	goStraight(&hcan1, forwardBuffer);
-		
-	HAL_Delay(5000);
-		
-	mediumSpeedY(forwardBuffer);
-	goStraight(&hcan1, forwardBuffer);
-	
-	HAL_Delay(5000);
-	
-	mediumSpeedX(forwardBuffer);
-	goStraight(&hcan1, forwardBuffer);
+	HAL_UART_Receive_IT(&uartHandle, uartReceiveBfr, 5);
+	HAL_NVIC_SetPriority(TIM1_UP_TIM10_IRQn, 1, 0);
+	HAL_NVIC_EnableIRQ(TIM1_UP_TIM10_IRQn);
+	HAL_TIM_Base_Start_IT(&htim10);
+	abortMove(&hcan1);
 	
 	while(1)
 	{	
-		
-		if(status == 1){
-			status = -1;
-			moveFigure8(&hcan1, forwardBuffer, backwardBuffer, rotateBuffer, abortBuffer);
-		}
-		else if(status == 2){
-			status = -1;
-			goStraight(&hcan1, forwardBuffer);
-		}
-		else if(status == 3){
-			status = -1;
-			goRight(&hcan1, rotateBufferRight);
-		}
-		else if(status == 4){
-			status = -1;
-			goLeft(&hcan1, rotateBufferLeft);
-		}
-		else if(status == 5){
-			status = -1;
-			abortMove(&hcan1, abortBuffer);
-		}
-		else if(status == 6){
-			status = -1;
-			goBack(&hcan1, backwardBuffer);
-		}
-		else if(status == 7){
-			status = -1;
-			circleRight(&hcan1);
-		}
-		else if(status == 8){
-			status = -1;
-			circleLeft(&hcan1);
-		}
-		else if(status == 9){
-			status = -1;
-			slowSpeedBackward(backwardBuffer);
-			slowSpeedForward(forwardBuffer);
-		}
-		else if(status == 10){
-			status = -1;
-			mediumSpeedBackward(backwardBuffer);
-			mediumSpeedForward(forwardBuffer);
-		}
-		else if(status == 11){
-			status = -1;
-			fastSpeedBackward(backwardBuffer);
-			fastSpeedForward(forwardBuffer);
+		if (flag_uart_main == 1)
+		{
+			flag_uart_main = 0;
+			
+//			if ((moveBuffer[0] != moveBuffer_prev[0]) && (moveBuffer[1] != moveBuffer_prev[1]) &&
+//				  (moveBuffer[2] != moveBuffer_prev[2]) && (moveBuffer[3] != moveBuffer_prev[3]))
+//			{
+				moveRobot(&hcan1, moveBuffer);
+//				moveBuffer_prev[0] = moveBuffer[0];
+//				moveBuffer_prev[1] = moveBuffer[1];
+//				moveBuffer_prev[2] = moveBuffer[2];
+//				moveBuffer_prev[3] = moveBuffer[3];
+//			}
+			
+	  }
+		if (flag_stop == 1)
+		{
+			flag_stop = 0;
+			abortMove(&hcan1);
 		}
 	}
-
 }
 
 void SystemClock_Config(void)
@@ -290,6 +243,22 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+}
+
+/* TIM10 init function */
+static void MX_TIM10_Init(void)
+{
+	__TIM10_CLK_ENABLE();
+  htim10.Instance = TIM10;
+  htim10.Init.Prescaler = 16;
+  htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim10.Init.Period = 1000;
+  htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  if (HAL_TIM_Base_Init(&htim10) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
 
 }
 
